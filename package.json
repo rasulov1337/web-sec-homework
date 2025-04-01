@@ -1,0 +1,16 @@
+{
+  "name": "web-apps-security-homework",
+  "version": "1.0.0",
+  "description": "",
+  "main": "1.js",
+  "scripts": {
+    "start": "npm run start:proxy",
+    "start:proxy": "node proxy.js",
+    "test": "echo \"Error: no test specified\" && exit 1"
+  },
+  "author": "",
+  "license": "ISC",
+  "dependencies": {
+    "http": "^0.0.1-security"
+  }
+}
