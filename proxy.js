@@ -73,7 +73,7 @@ const server = http.createServer((req, res) => {
 });
 
 // HTTPS
-server.on("connect", (req, clientSocket) => {
+server.on("connect", (req, clientSocket, head) => {
   const [host, port] = req.url.split(":");
 
   const cert = genCerts(host);
@@ -85,7 +85,7 @@ server.on("connect", (req, clientSocket) => {
       rejectUnauthorized: false,
     },
     () => {
-      clientSocket.write("HTTP/1.1 200 Connection Established\n");
+      clientSocket.write("HTTP/1.1 200 Connection Established\r\n\r\n");
       console.log(`Starting TLS handshake with ${host}:${port}`);
       const tlsSocket = new tls.TLSSocket(clientSocket, {
         isServer: true,
@@ -94,13 +94,17 @@ server.on("connect", (req, clientSocket) => {
         rejectUnauthorized: false,
       });
 
+      if (head && head.length) {
+        serverSocket.write(head);
+      }
+
       tlsSocket.pipe(serverSocket).pipe(tlsSocket);
     },
   );
 
   serverSocket.on("error", (err) => {
     console.error("TLS Connection error:", err);
-    clientSocket.write("HTTP/1.1 502 Bad Gateway\n");
+    clientSocket.write("HTTP/1.1 502 Bad Gateway\r\n\r\n");
     clientSocket.end();
   });
 
