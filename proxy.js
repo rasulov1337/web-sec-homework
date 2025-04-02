@@ -1,7 +1,37 @@
 const http = require("http");
+const tls = require("tls");
+const fs = require("fs");
+const { spawnSync } = require("child_process");
+
+const path = require("path");
 
 const PROXY_PORT = 8080;
+const CA_KEY_PATH = "cert.key";
 
+const genCerts = (hostname) => {
+  const certPath = path.join(__dirname, `certs/${hostname}.crt`);
+
+  if (!fs.existsSync(certPath)) {
+    console.log(`Generating certificate for ${hostname}`);
+    const result = spawnSync(
+      "./gen_cert.sh",
+      [hostname, Date.now().toString()],
+      {
+        stdio: "inherit",
+      },
+    );
+    if (result.error) {
+      throw new Error("Certificate generation failed");
+    }
+  }
+
+  return {
+    key: fs.readFileSync(CA_KEY_PATH),
+    cert: fs.readFileSync(certPath),
+  };
+};
+
+// HTTP
 const server = http.createServer((req, res) => {
   const { method, headers } = req;
 
@@ -30,7 +60,6 @@ const server = http.createServer((req, res) => {
   };
 
   const proxyReq = http.request(options, (proxyRes) => {
-    // console.log("Response Headers:", proxyRes.headers);
     res.writeHead(proxyRes.statusCode, proxyRes.headers);
     proxyRes.pipe(res);
   });
@@ -41,6 +70,41 @@ const server = http.createServer((req, res) => {
   });
 
   req.pipe(proxyReq);
+});
+
+// HTTPS
+server.on("connect", (req, clientSocket) => {
+  const [host, port] = req.url.split(":");
+
+  const cert = genCerts(host);
+
+  const serverSocket = tls.connect(
+    {
+      host: host,
+      port: port || 443,
+      rejectUnauthorized: false,
+    },
+    () => {
+      clientSocket.write("HTTP/1.1 200 Connection Established\n");
+      console.log(`Starting TLS handshake with ${host}:${port}`);
+      const tlsSocket = new tls.TLSSocket(clientSocket, {
+        isServer: true,
+        key: cert.key,
+        cert: cert.cert,
+        rejectUnauthorized: false,
+      });
+
+      tlsSocket.pipe(serverSocket).pipe(tlsSocket);
+    },
+  );
+
+  serverSocket.on("error", (err) => {
+    console.error("TLS Connection error:", err);
+    clientSocket.write("HTTP/1.1 502 Bad Gateway\n");
+    clientSocket.end();
+  });
+
+  clientSocket.on("error", () => serverSocket.end());
 });
 
 server.listen(PROXY_PORT, () => {
