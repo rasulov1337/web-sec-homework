@@ -31,7 +31,6 @@ const genCerts = (hostname) => {
   };
 };
 
-// HTTP
 const server = http.createServer((req, res) => {
   const { method, headers } = req;
 
@@ -72,7 +71,7 @@ const server = http.createServer((req, res) => {
   req.pipe(proxyReq);
 });
 
-// HTTPS
+// Emitted each time a server responds to a request with a CONNECT method
 server.on("connect", (req, clientSocket, head) => {
   const [host, port] = req.url.split(":");
 
