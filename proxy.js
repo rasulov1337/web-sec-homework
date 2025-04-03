@@ -3,18 +3,20 @@ import { connect, TLSSocket } from "tls";
 import { existsSync, readFileSync } from "fs";
 import { spawnSync } from "child_process";
 import { requests } from "./storage.js";
+import { URL } from "node:url";
+const __dirname = new URL(".", import.meta.url).pathname;
 
 const CA_KEY_PATH = "cert.key";
 
 let idIncrement = 0;
 
 const genCerts = (hostname) => {
-  const certPath = `certs/${hostname}.crt`;
+  const certPath = __dirname + `certs/${hostname}.crt`;
 
   if (!existsSync(certPath)) {
     console.log(`Generating certificate for ${hostname}`);
     const result = spawnSync(
-      "./gen_cert.sh",
+      __dirname + "/gen_cert.sh",
       [hostname, Date.now().toString()],
       {
         stdio: "inherit",
