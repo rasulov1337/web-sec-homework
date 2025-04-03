@@ -4,6 +4,8 @@ WORKDIR /app
 
 COPY . .
 
+RUN apk add --no-cache openssl bash
+RUN chmod +x /app/gen_cert.sh
 RUN npm i
 
 EXPOSE 8080 8080

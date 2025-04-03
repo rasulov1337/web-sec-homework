@@ -16,14 +16,14 @@ const genCerts = (hostname) => {
   if (!existsSync(certPath)) {
     console.log(`Generating certificate for ${hostname}`);
     const result = spawnSync(
-      __dirname + "/gen_cert.sh",
+      __dirname + "gen_cert.sh",
       [hostname, Date.now().toString()],
       {
         stdio: "inherit",
       },
     );
     if (result.error) {
-      throw new Error("Certificate generation failed");
+      throw new Error(`Certificate generation failed: ${result.error}`);
     }
   }
 
