@@ -1,17 +1,17 @@
-const http = require("http");
-const tls = require("tls");
-const fs = require("fs");
-const { spawnSync } = require("child_process");
+import { createServer, request } from "http";
+import { connect, TLSSocket } from "tls";
+import { existsSync, readFileSync } from "fs";
+import { spawnSync } from "child_process";
+import { requests } from "./storage.js";
 
-const path = require("path");
-
-const PROXY_PORT = 8080;
 const CA_KEY_PATH = "cert.key";
 
-const genCerts = (hostname) => {
-  const certPath = path.join(__dirname, `certs/${hostname}.crt`);
+let idIncrement = 0;
 
-  if (!fs.existsSync(certPath)) {
+const genCerts = (hostname) => {
+  const certPath = `certs/${hostname}.crt`;
+
+  if (!existsSync(certPath)) {
     console.log(`Generating certificate for ${hostname}`);
     const result = spawnSync(
       "./gen_cert.sh",
@@ -26,13 +26,14 @@ const genCerts = (hostname) => {
   }
 
   return {
-    key: fs.readFileSync(CA_KEY_PATH),
-    cert: fs.readFileSync(certPath),
+    key: readFileSync(CA_KEY_PATH),
+    cert: readFileSync(certPath),
   };
 };
 
-const server = http.createServer((req, res) => {
+const server = createServer((req, res) => {
   const { method, headers } = req;
+  requests[idIncrement++] = [`${method}`, `${req.url}`];
 
   const match = req.url.match(/^http:\/\/([^\/]+)(.*)$/);
   if (!match) {
@@ -58,7 +59,7 @@ const server = http.createServer((req, res) => {
     headers: filteredHeaders,
   };
 
-  const proxyReq = http.request(options, (proxyRes) => {
+  const proxyReq = request(options, (proxyRes) => {
     res.writeHead(proxyRes.statusCode, proxyRes.headers);
     proxyRes.pipe(res);
   });
@@ -73,11 +74,12 @@ const server = http.createServer((req, res) => {
 
 // Emitted each time a server responds to a request with a CONNECT method
 server.on("connect", (req, clientSocket, head) => {
+  requests[idIncrement++] = ["CONNECT", req.url];
   const [host, port] = req.url.split(":");
 
   const cert = genCerts(host);
 
-  const serverSocket = tls.connect(
+  const serverSocket = connect(
     {
       host: host,
       port: port || 443,
@@ -86,7 +88,7 @@ server.on("connect", (req, clientSocket, head) => {
     () => {
       clientSocket.write("HTTP/1.1 200 Connection Established\r\n\r\n");
       console.log(`Starting TLS handshake with ${host}:${port}`);
-      const tlsSocket = new tls.TLSSocket(clientSocket, {
+      const tlsSocket = new TLSSocket(clientSocket, {
         isServer: true,
         key: cert.key,
         cert: cert.cert,
@@ -110,6 +112,4 @@ server.on("connect", (req, clientSocket, head) => {
   clientSocket.on("error", () => serverSocket.end());
 });
 
-server.listen(PROXY_PORT, () => {
-  console.log(`Proxy server running on port ${PROXY_PORT}`);
-});
+export default server;
