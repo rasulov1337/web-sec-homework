@@ -1,34 +1,55 @@
-import express, { json, request } from "express";
-import { existsSync, readFileSync, writeFileSync } from "fs";
-import { join } from "path";
-import { requests } from "./storage.js";
+import express from "express";
+import { getAllRequests, getRequestById } from "./storage.js";
 
 const app = express();
 
-app.use(json());
-
 app.get("/requests", (req, res) => {
-  res.json(requests);
+    res.json(getAllRequests());
 });
 
 app.get("/requests/:id", (req, res) => {
-  const id = req.params.id;
-  if (id in requests) return res.json(requests[id]);
-
-  res.status(404).json({ error: "Request not found" });
+    const data = getRequestById(req.params.id);
+    if (!data) return res.status(404).send("Not found");
+    res.json(data);
 });
 
-app.post("/repeat/:id", (req, res) => {
-  const id = req.params.id;
-  if (id in requests) return res.redirect(requests[id][1]);
+app.get("/repeat/:id", async (req, res) => {
+    const data = getRequestById(req.params.id);
+    if (!data) return res.status(404).json({ error: "Not found" });
 
-  res.status(404).json({ error: "Request not found" });
+    const headers = JSON.parse(data.headers);
+    const postParams = JSON.parse(data.post_params);
+    let body = "";
+
+    if (postParams) {
+        body = new URLSearchParams(postParams).toString();
+        headers["content-length"] = Buffer.byteLength(body);
+    }
+
+    const options = {
+        hostname: headers.host,
+        port: 80,
+        path: data.path,
+        method: data.method,
+        headers,
+    };
+
+    const proxyReq = request(options, (proxyRes) => {
+        proxyRes.pipe(res);
+    });
+
+    proxyReq.on("error", (err) => {
+        res.status(500).send("Repeat Error");
+    });
+
+    if (body) proxyReq.write(body);
+    proxyReq.end();
 });
 
-app.post("/scan/:id", (req, res) => {
-  // Not implemented
-  // Will be in the 4th task
-  return res.json({ message: "Too early. Wait for the 4th hw" });
+app.get("/scan/:id", (req, res) => {
+    // Not implemented
+    // Will be in the 4th task
+    res.send("Too early. Wait for the 4th hw");
 });
 
 export default app;
