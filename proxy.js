@@ -4,6 +4,7 @@ import { existsSync, readFileSync } from "fs";
 import { spawnSync } from "child_process";
 import { saveRequest, getRequestById } from "./storage.js";
 import { URL } from "url";
+import { POSSIBLE_PARAMS } from "./params.js";
 
 const __dirname = new URL(".", import.meta.url).pathname;
 const CA_KEY_PATH = "cert.key";
@@ -90,6 +91,56 @@ function parseResponseHeaders(buffer) {
         headers[key.toLowerCase()] = value.join(": ");
     });
     return headers;
+}
+
+// Param Miner
+export async function scanRequestForHiddenParams(requestId) {
+    const entry = await getRequestById(requestId);
+    if (!entry) {
+        console.log(`Запись с id ${requestId} не найдена.`);
+        return;
+    }
+
+    console.log(entry.headers["host"]);
+
+    const baseUrl = new URL(
+        entry.path,
+        entry.headers.host.startsWith("http")
+            ? entry.headers.host
+            : "http://" + entry.headers.host
+    );
+
+    for (const paramName of POSSIBLE_PARAMS) {
+        const testValue = "djsahaf";
+        baseUrl.searchParams.set(paramName, testValue);
+
+        const protocol = baseUrl.protocol === "https:" ? https : request;
+        const options = {
+            hostname: baseUrl.hostname,
+            port: baseUrl.port || (baseUrl.protocol === "https:" ? 443 : 80),
+            path: baseUrl.pathname + baseUrl.search,
+            method: "GET",
+            headers: entry.headers,
+        };
+
+        await new Promise((resolve) => {
+            const req = protocol.request(options, (res) => {
+                let chunks = [];
+                res.on("data", (chunk) => chunks.push(chunk));
+                res.on("end", () => {
+                    const body = Buffer.concat(chunks).toString();
+                    if (body.includes(testValue)) {
+                        console.log(`Найден скрытый параметр: ${paramName}`);
+                    }
+                    resolve();
+                });
+            });
+            req.on("error", resolve);
+            req.end();
+        });
+    }
+
+    console.log(`Сканирование для requestId=${requestId} завершено.`);
 }
 
 const server = createServer((req, res) => {

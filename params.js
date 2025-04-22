@@ -1,4 +1,4 @@
-export default params = [
+export const POSSIBLE_PARAMS = [
     "id",
     "user",
     "account",

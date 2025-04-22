@@ -1,5 +1,6 @@
 import express from "express";
 import { getAllRequests, getRequestById } from "./storage.js";
+import { scanRequestForHiddenParams } from "./proxy.js";
 
 const app = express();
 
@@ -46,10 +47,10 @@ app.get("/repeat/:id", async (req, res) => {
     proxyReq.end();
 });
 
-app.get("/scan/:id", (req, res) => {
-    // Not implemented
-    // Will be in the 4th task
-    res.send("Too early. Wait for the 4th hw");
+app.get("/scan/:requestId", async (req, res) => {
+    const id = req.params.requestId;
+    await scanRequestForHiddenParams(id);
+    res.send(`Сканирование для ${id} завершено. Смотри консоль.`);
 });
 
 export default app;
