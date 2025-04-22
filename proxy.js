@@ -44,6 +44,54 @@ function parseBody(contentType, body) {
     return null;
 }
 
+function parseHttpRequest(buffer) {
+    const text = buffer.toString();
+    const [headerPart, bodyPart = ""] = text.split("\r\n\r\n");
+    const headerLines = headerPart.split("\r\n");
+
+    const [method, path] = headerLines[0].split(" ");
+    const headers = {};
+    headerLines.slice(1).forEach((line) => {
+        const [key, ...value] = line.split(": ");
+        headers[key.toLowerCase()] = value.join(": ");
+    });
+
+    const postParams = parseBody(headers["content-type"], bodyPart);
+
+    return {
+        method,
+        path,
+        headers,
+        cookies: parseCookies(headers["cookie"]),
+        postParams,
+        rawBody: bodyPart,
+    };
+}
+
+function extractHttpRequest(buffer) {
+    const text = buffer.toString();
+    const [headerPart, bodyPart = ""] = text.split("\r\n\r\n");
+    const contentLengthMatch = headerPart.match(/content-length:\s*(\d+)/i);
+    const expectedLength = contentLengthMatch
+        ? parseInt(contentLengthMatch[1], 10)
+        : 0;
+    const bodyBuffer = buffer.slice(headerPart.length + 4);
+    if (bodyBuffer.length < expectedLength) return null;
+    return parseHttpRequest(buffer);
+}
+
+function parseResponseHeaders(buffer) {
+    const text = buffer.toString();
+    const [headerPart] = text.split("\r\n\r\n");
+    const headerLines = headerPart.split("\r\n");
+    const headers = {};
+    headerLines.slice(1).forEach((line) => {
+        const [key, ...value] = line.split(": ");
+        headers[key.toLowerCase()] = value.join(": ");
+    });
+    return headers;
+}
+
 const server = createServer((req, res) => {
     const { method, headers } = req;
     let bodyChunks = [];
@@ -52,6 +100,7 @@ const server = createServer((req, res) => {
 
     req.on("end", () => {
         const body = Buffer.concat(bodyChunks).toString();
+
         const match = req.url.match(/^http:\/\/([^\/]+)(.*)$/);
         if (!match) {
             res.writeHead(400, { "Content-Type": "text/plain" });
@@ -74,6 +123,8 @@ const server = createServer((req, res) => {
             filteredHeaders["content-length"] = Buffer.byteLength(body);
         }
 
+        const postParams = parseBody(headers["content-type"], body);
+
         const options = {
             hostname: targetHost,
             port: targetPort,
@@ -88,7 +139,6 @@ const server = createServer((req, res) => {
             proxyRes.on("data", (chunk) => responseChunks.push(chunk));
             proxyRes.on("end", () => {
                 const responseBody = Buffer.concat(responseChunks);
-
                 saveRequest({
                     method,
                     path: relativePath,
@@ -97,18 +147,18 @@ const server = createServer((req, res) => {
                     ),
                     headers: filteredHeaders,
                     cookies: parseCookies(headers["cookie"]),
-                    post_params: parseBody(headers["content-type"], body),
+                    post_params: postParams,
+                    request_body: body,
                     response_code: proxyRes.statusCode,
                     response_headers: proxyRes.headers,
                     response_body: responseBody.toString(),
                 });
-
-                res.end(responseBody);
             });
 
             const headersCopy = { ...proxyRes.headers };
-            delete headersCopy["content-length"]; // убрать
+            delete headersCopy["content-length"];
             res.writeHead(proxyRes.statusCode, headersCopy);
+            proxyRes.pipe(res);
         });
 
         proxyReq.on("error", () => {
@@ -116,14 +166,11 @@ const server = createServer((req, res) => {
             res.end("Proxy Error\n");
         });
 
-        if (body) {
-            proxyReq.write(body);
-        }
+        if (body) proxyReq.write(body);
         proxyReq.end();
     });
 });
 
-// Emitted each time a server responds to a request with a CONNECT method
 server.on("connect", (req, clientSocket, head) => {
     const [host, port] = req.url.split(":");
     const cert = genCerts(host);
@@ -132,21 +179,63 @@ server.on("connect", (req, clientSocket, head) => {
         { host, port: port || 443, rejectUnauthorized: false },
         () => {
             clientSocket.write("HTTP/1.1 200 Connection Established\r\n\r\n");
+
             const tlsSocket = new TLSSocket(clientSocket, {
                 isServer: true,
                 key: cert.key,
                 cert: cert.cert,
+                rejectUnauthorized: false,
             });
 
-            if (head && head.length) {
-                serverSocket.write(head);
-            }
+            let clientData = [];
+            let serverData = [];
 
-            tlsSocket.pipe(serverSocket).pipe(tlsSocket);
+            tlsSocket.on("data", (chunk) => {
+                clientData.push(chunk);
+                serverSocket.write(chunk);
+            });
+
+            serverSocket.on("data", (chunk) => {
+                serverData.push(chunk);
+                tlsSocket.write(chunk);
+            });
+
+            tlsSocket.on("end", () => {
+                const fullRequest = Buffer.concat(clientData);
+                const parsed = extractHttpRequest(fullRequest);
+
+                if (parsed) {
+                    saveRequest({
+                        method: parsed.method,
+                        path: parsed.path,
+                        get_params: parsed.path.includes("?")
+                            ? Object.fromEntries(
+                                  new URLSearchParams(parsed.path.split("?")[1])
+                              )
+                            : {},
+                        headers: parsed.headers,
+                        cookies: parsed.cookies,
+                        post_params: parsed.postParams,
+                        response_code: 200,
+                        response_headers: parseResponseHeaders(
+                            Buffer.concat(serverData)
+                        ),
+                        request_body: parsed.rawBody,
+                        response_body: Buffer.concat(serverData).toString(),
+                    });
+                } else {
+                    console.warn("Incomplete HTTP POST body, skipping save.");
+                }
+
+                serverSocket.end();
+            });
+
+            serverSocket.on("end", () => tlsSocket.end());
         }
     );
 
-    serverSocket.on("error", () => {
+    serverSocket.on("error", (err) => {
+        console.error("TLS Connection error:", err);
         clientSocket.write("HTTP/1.1 502 Bad Gateway\r\n\r\n");
         clientSocket.end();
     });

@@ -11,6 +11,7 @@ CREATE TABLE IF NOT EXISTS requests (
     headers TEXT,
     cookies TEXT,
     post_params TEXT,
+    body TEXT,
     response_code INTEGER,
     response_headers TEXT,
     response_body TEXT
@@ -19,8 +20,8 @@ CREATE TABLE IF NOT EXISTS requests (
 
 export function saveRequest(data) {
     const statement = db.prepare(`
-        INSERT INTO requests (method, path, get_params, headers, cookies, post_params, response_code, response_headers, response_body)
-        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+        INSERT INTO requests (method, path, get_params, headers, cookies, post_params, body, response_code, response_headers, response_body)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
     `);
     statement.run(
         data.method,
@@ -29,6 +30,7 @@ export function saveRequest(data) {
         JSON.stringify(data.headers),
         JSON.stringify(data.cookies),
         JSON.stringify(data.post_params),
+        data.request_body,
         data.response_code,
         JSON.stringify(data.response_headers),
         data.response_body
