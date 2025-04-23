@@ -3,26 +3,30 @@ import Database from "better-sqlite3";
 const db = new Database("db.sqlite");
 
 db.exec(`
-CREATE TABLE IF NOT EXISTS requests (
-    id INTEGER PRIMARY KEY AUTOINCREMENT,
-    method TEXT,
-    path TEXT,
-    get_params TEXT,
-    headers TEXT,
-    cookies TEXT,
-    post_params TEXT,
-    body TEXT,
-    response_code INTEGER,
-    response_headers TEXT,
-    response_body TEXT
-);
-`);
+    CREATE TABLE IF NOT EXISTS requests (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        method TEXT,
+        path TEXT,
+        get_params TEXT,
+        headers TEXT,
+        cookies TEXT,
+        post_params TEXT,
+        body TEXT,
+        response_code INTEGER,
+        response_headers TEXT,
+        response_body TEXT,
+        protocol TEXT
+    );
+    `);
 
 export function saveRequest(data) {
     const statement = db.prepare(`
-        INSERT INTO requests (method, path, get_params, headers, cookies, post_params, body, response_code, response_headers, response_body)
-        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-    `);
+            INSERT INTO requests (
+                method, path, get_params, headers, cookies,
+                post_params, body, response_code, response_headers,
+                response_body, protocol
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        `);
     statement.run(
         data.method,
         data.path,
@@ -33,7 +37,8 @@ export function saveRequest(data) {
         data.request_body,
         data.response_code,
         JSON.stringify(data.response_headers),
-        data.response_body
+        data.response_body,
+        data.protocol
     );
 }
 

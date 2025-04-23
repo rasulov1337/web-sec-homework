@@ -4,7 +4,7 @@ import { existsSync, readFileSync } from "fs";
 import { spawnSync } from "child_process";
 import { saveRequest, getRequestById } from "./storage.js";
 import { URL } from "url";
-import { POSSIBLE_PARAMS } from "./params.js";
+import POSSIBLE_PARAMS from "./params.js";
 
 const __dirname = new URL(".", import.meta.url).pathname;
 const CA_KEY_PATH = "cert.key";
@@ -57,90 +57,67 @@ function parseHttpRequest(buffer) {
         headers[key.toLowerCase()] = value.join(": ");
     });
 
-    const postParams = parseBody(headers["content-type"], bodyPart);
+    const postParams = headers["content-type"]?.includes(
+        "application/x-www-form-urlencoded"
+    )
+        ? Object.fromEntries(new URLSearchParams(bodyPart))
+        : {};
 
     return {
         method,
         path,
         headers,
-        cookies: parseCookies(headers["cookie"]),
+        cookies: headers["cookie"]
+            ? Object.fromEntries(
+                  headers["cookie"].split("; ").map((c) => c.split("="))
+              )
+            : {},
         postParams,
         rawBody: bodyPart,
     };
 }
 
-function extractHttpRequest(buffer) {
-    const text = buffer.toString();
-    const [headerPart, bodyPart = ""] = text.split("\r\n\r\n");
-    const contentLengthMatch = headerPart.match(/content-length:\s*(\d+)/i);
-    const expectedLength = contentLengthMatch
-        ? parseInt(contentLengthMatch[1], 10)
-        : 0;
-    const bodyBuffer = buffer.slice(headerPart.length + 4);
-    if (bodyBuffer.length < expectedLength) return null;
-    return parseHttpRequest(buffer);
-}
-
-function parseResponseHeaders(buffer) {
-    const text = buffer.toString();
-    const [headerPart] = text.split("\r\n\r\n");
-    const headerLines = headerPart.split("\r\n");
-    const headers = {};
-    headerLines.slice(1).forEach((line) => {
-        const [key, ...value] = line.split(": ");
-        headers[key.toLowerCase()] = value.join(": ");
-    });
-    return headers;
-}
-
-// Param Miner
 export async function scanRequestForHiddenParams(requestId) {
-    const entry = await getRequestById(requestId);
-    if (!entry) {
-        console.log(`Запись с id ${requestId} не найдена.`);
-        return;
+    const entry = getRequestById(requestId);
+    if (!entry) return { error: "Request not found" };
+
+    const headers = JSON.parse(entry.headers);
+    const host = headers.host;
+
+    if (!host) return { error: "Host header not found in request data" };
+
+    const hiddenParams = [];
+    const testValue = "djsahaf";
+
+    let baseUrl;
+    try {
+        baseUrl = new URL(entry.path, `${entry.protocol}://${host}`);
+    } catch (e) {
+        return { error: "Invalid URL constructed from request data" };
     }
 
-    console.log(entry.headers["host"]);
+    console.log(POSSIBLE_PARAMS);
 
-    const baseUrl = new URL(
-        entry.path,
-        entry.headers.host.startsWith("http")
-            ? entry.headers.host
-            : "http://" + entry.headers.host
-    );
+    for (const param of POSSIBLE_PARAMS) {
+        const url = new URL(baseUrl);
+        url.searchParams.append(param, testValue);
+        console.log("Scanning", `${entry.protocol}://${host}${entry.path}`);
 
-    for (const paramName of POSSIBLE_PARAMS) {
-        const testValue = "djsahaf";
-        baseUrl.searchParams.set(paramName, testValue);
-
-        const protocol = baseUrl.protocol === "https:" ? https : request;
-        const options = {
-            hostname: baseUrl.hostname,
-            port: baseUrl.port || (baseUrl.protocol === "https:" ? 443 : 80),
-            path: baseUrl.pathname + baseUrl.search,
-            method: "GET",
-            headers: entry.headers,
-        };
-
-        await new Promise((resolve) => {
-            const req = protocol.request(options, (res) => {
-                let chunks = [];
-                res.on("data", (chunk) => chunks.push(chunk));
-                res.on("end", () => {
-                    const body = Buffer.concat(chunks).toString();
-                    if (body.includes(testValue)) {
-                        console.log(`Найден скрытый параметр: ${paramName}`);
-                    }
-                    resolve();
-                });
+        try {
+            const res = await fetch(url.toString(), {
+                method: "GET",
+                headers: headers,
             });
-            req.on("error", resolve);
-            req.end();
-        });
+            const body = await res.text();
+            if (body.includes(testValue)) {
+                hiddenParams.push(param);
+            }
+        } catch (err) {
+            console.error(`Failed to scan param ${param}:`, err);
+        }
     }
 
-    console.log(`Сканирование для requestId=${requestId} завершено.`);
+    return { hiddenParams };
 }
 
 const server = createServer((req, res) => {
@@ -174,7 +151,11 @@ const server = createServer((req, res) => {
             filteredHeaders["content-length"] = Buffer.byteLength(body);
         }
 
-        const postParams = parseBody(headers["content-type"], body);
+        const postParams = headers["content-type"]?.includes(
+            "application/x-www-form-urlencoded"
+        )
+            ? Object.fromEntries(new URLSearchParams(body))
+            : {};
 
         const options = {
             hostname: targetHost,
@@ -190,6 +171,7 @@ const server = createServer((req, res) => {
             proxyRes.on("data", (chunk) => responseChunks.push(chunk));
             proxyRes.on("end", () => {
                 const responseBody = Buffer.concat(responseChunks);
+
                 saveRequest({
                     method,
                     path: relativePath,
@@ -199,10 +181,11 @@ const server = createServer((req, res) => {
                     headers: filteredHeaders,
                     cookies: parseCookies(headers["cookie"]),
                     post_params: postParams,
-                    request_body: body,
                     response_code: proxyRes.statusCode,
                     response_headers: proxyRes.headers,
                     response_body: responseBody.toString(),
+                    request_body: body,
+                    protocol: "http",
                 });
             });
 
@@ -253,30 +236,25 @@ server.on("connect", (req, clientSocket, head) => {
 
             tlsSocket.on("end", () => {
                 const fullRequest = Buffer.concat(clientData);
-                const parsed = extractHttpRequest(fullRequest);
+                const parsed = parseHttpRequest(fullRequest);
 
-                if (parsed) {
-                    saveRequest({
-                        method: parsed.method,
-                        path: parsed.path,
-                        get_params: parsed.path.includes("?")
-                            ? Object.fromEntries(
-                                  new URLSearchParams(parsed.path.split("?")[1])
-                              )
-                            : {},
-                        headers: parsed.headers,
-                        cookies: parsed.cookies,
-                        post_params: parsed.postParams,
-                        response_code: 200,
-                        response_headers: parseResponseHeaders(
-                            Buffer.concat(serverData)
-                        ),
-                        request_body: parsed.rawBody,
-                        response_body: Buffer.concat(serverData).toString(),
-                    });
-                } else {
-                    console.warn("Incomplete HTTP POST body, skipping save.");
-                }
+                saveRequest({
+                    method: parsed.method,
+                    path: parsed.path,
+                    get_params: parsed.path.includes("?")
+                        ? Object.fromEntries(
+                              new URLSearchParams(parsed.path.split("?")[1])
+                          )
+                        : {},
+                    headers: parsed.headers,
+                    cookies: parsed.cookies,
+                    post_params: parsed.postParams,
+                    response_code: 200,
+                    response_headers: {},
+                    response_body: Buffer.concat(serverData).toString(),
+                    request_body: parsed.rawBody,
+                    protocol: "https",
+                });
 
                 serverSocket.end();
             });

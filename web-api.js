@@ -48,9 +48,8 @@ app.get("/repeat/:id", async (req, res) => {
 });
 
 app.get("/scan/:requestId", async (req, res) => {
-    const id = req.params.requestId;
-    await scanRequestForHiddenParams(id);
-    res.send(`Сканирование для ${id} завершено. Смотри консоль.`);
+    const result = await scanRequestForHiddenParams(req.params.requestId);
+    res.json(result);
 });
 
 export default app;

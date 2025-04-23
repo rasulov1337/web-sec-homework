@@ -1,4 +1,4 @@
-export const POSSIBLE_PARAMS = [
+const POSSIBLE_PARAMS = [
     "id",
     "user",
     "account",
@@ -6526,3 +6526,16 @@ export const POSSIBLE_PARAMS = [
     "_rsc",
     "__nextDataReq",
 ];
+
+const LIMITED_PARAMS = [
+    "id",
+    "user",
+    "account",
+    "number",
+    "order",
+    "no",
+    "doc",
+];
+
+export default LIMITED_PARAMS;
+// export default POSSIBLE_PARAMS;  // <-- для фулл скана
